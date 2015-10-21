@@ -5,7 +5,7 @@ MAINTAINER Silvio Fricke <silvio.fricke@gmail.com>
 VOLUME /B /backupdir
 WORKDIR /borg
 
-ENTRYPOINT ["/usr/bin/borgctrl.sh"]
+ENTRYPOINT ["/usr/bin/borgctrl"]
 CMD ["--help"]
 
 RUN export DEBIAN_FRONTEND=noninteractive \
@@ -15,29 +15,43 @@ RUN export DEBIAN_FRONTEND=noninteractive \
         fakeroot \
         fuse \
         git-core \
-        libacl1 \
         libacl1-dev \
+        liblz4-dev \
         libssl-dev \
-        openssl \
+        python-lz4 \
         python-virtualenv \
         python3-dev \
+	sshfs \
     && apt-get clean -y
 
 RUN git clone git://github.com/wallyhall/shini.git \
     && cp shini/shini.sh /usr/bin/shini \
     && chmod a+x /usr/bin/shini
 
-RUN virtualenv --python=python3 borg-env ; \
-    . borg-env/bin/activate ; \
+RUN virtualenv --python=python3 /borg-env ; \
+    . /borg-env/bin/activate ; \
     pip install --upgrade pip ; \
     pip install cython ; \
     pip install tox
 
-ADD adds/borgctrl.sh /usr/bin/borgctrl.sh
-RUN chmod a+x /usr/bin/borgctrl.sh
+# the "git clone" and "pip install" is cached, we need to invalidate the docker cache here
+#ADD http://www.random.org/strings/?num=1&len=10&digits=on&upperalpha=on&loweralpha=on&unique=on&format=plain&rnd=new uuid
 
-# the "git clone" is cached, we need to invalidate the docker cache here
-ADD http://www.random.org/strings/?num=1&len=10&digits=on&upperalpha=on&loweralpha=on&unique=on&format=plain&rnd=new uuid
-RUN git clone https://github.com/borgbackup/borg.git borg-git -b master; \
-    . borg-env/bin/activate ; \
-    pip install -e borg-git
+# borg - "stable" version
+RUN . /borg-env/bin/activate ;\
+    pip install borgbackup
+
+# borg - development version uncomment the 2 lines above to use the development
+# version of borgbackup
+#RUN git clone https://github.com/borgbackup/borg.git borgbackup-git -b master; \
+#    . borg-env/bin/activate ; \
+#    pip install -e borgbackup-git
+# borgweb is a webbased userinterface for borgbackup, maybe its usefull in
+# future, but for now its commented and not tested
+#    git clone https://github.com/borgbackup/borgweb.git borgweb-git -b master; \
+#    pip install -e borgweb-git
+#    EXPOSE 7000
+
+ADD adds/borgctrl.sh /usr/bin/borgctrl
+RUN chmod a+x /usr/bin/borgctrl
+
