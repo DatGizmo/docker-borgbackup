@@ -9,13 +9,30 @@
 # shell - opens a shell for restore and controling job
 # do_backup - target which started in the docker container and does the backup
 #
+# functions host_* executed before the docker container gets started
+# functions docker_* executed at docker runtime
 
 declare -r INIFILE="$HOME/.borgbackup.ini"
 declare -r DOCKERCONTAINER="borgbackup:test"
+declare -r INSTALLDIR=$(dirname "$(realpath ${BASH_SOURCE[0]})" )
 
 usage() {
 	echo "usage ..."
 }
+
+# check installation of shini
+SHINI=""
+if [[ -f ${INSTALLDIR}/../misc/shini/shini.sh ]]; then
+	SHINI="${INSTALLDIR}/../misc/shini/shini.sh"
+else
+	if [[ -f /usr/bin/shini ]]; then
+		SHINI=/usr/bin/shini
+	else
+		echo "NO /usr/bin/shini found, please copy shini.sh from https://github.com/wallyhall/shini to /usr/bin/"
+		usage
+		exit 1
+	fi
+fi
 
 [[ -z "${1}" ]] && usage && exit 1
 [[ ! -e "${INIFILE}" ]] && echo "No ${INIFILE} found" && usage && exit 1
@@ -26,14 +43,14 @@ declare -A BACKUPS
 declare -A BACKUPIDS
 
 init_from_ini() {
-	source /usr/bin/shini
+	source $SHINI
 
 	__shini_parsed () {
 		case "${1}" in
 			"GENERAL")
 				[[ "$2" == "REPOSITORY" ]] && GENERAL[REPOSITORY]="$3"
-				[[ "$2" == "SSHKEY" ]] && GENERAL[SSHKEY]="$3"
 				[[ "$2" == "SUDO" ]] && GENERAL[SUDO]="$3"
+				[[ "$2" == "FOLDER" ]] && GENERAL[FOLDER]="$3"
 				[[ "$2" == "FILECACHE" ]] && GENERAL[FILECACHE]="$3"
 				[[ "$2" == "VERBOSE" ]] && GENERAL[VERBOSE]="$3"
 				[[ "$2" == "RESTOREDIR" ]] && GENERAL[RESTOREDIR]="$3"
@@ -55,12 +72,10 @@ init_from_ini() {
 				;;
 		esac
 	}
-
 	shini_parse ${INIFILE}
-}
 
-host_backup() {
-	:
+	# default handling
+	[[ -z "${GENERAL[FOLDER]}" ]] && GENERAL[FOLDER]="BACKUP"
 }
 
 host_shell() {
@@ -70,11 +85,11 @@ host_shell() {
 	init_from_ini
 
 	dockerenv="-v ${HOME}/.borgbackup.ini:/root/.borgbackup.ini"
+	dockerenv="${dockerenv} -v ${SSH_AUTH_SOCK}:/root/.ssh-agent -e SSH_AUTH_SOCK=/root/.ssh-agent"
 
 	[[ "${GENERAL[SUDO]}" == "1" ]] && sudo="sudo"
 	[[ ! -z "${GENERAL[ENV]}" ]] && dockerenv="${dockerenv} ${GENERAL[ENV]}"
 	[[ ! -z "${GENERAL[FILECACHE]}" ]] && dockerenv="${dockerenv} -v ${GENERAL[FILECACHE]}:/root/.cache/borg"
-	[[ ! -z "${GENERAL[SSHKEY]}" ]] && dockerenv="${dockerenv} -v ${GENERAL[SSHKEY]}:/root/.ssh/id_rsa"
 	[[ ! -z "${GENERAL[RESTORE]}" ]] && dockerenv="${dockerenv} -v ${GENERAL[RESTORE]}:/RESTORE"
 
 	for id in "${!BACKUPIDS[@]}"; do
@@ -86,121 +101,35 @@ host_shell() {
 }
 
 docker_do_shell() {
-	exec /bin/bash --rcfile /borg-env/bin/activate
+	init_from_ini
+
+	docker_mount_repo
+
+	# setup sshfs
+	# must be the last line
+	/bin/bash --rcfile /borg-env/bin/activate
+}
+
+docker_mount_repo() {
+	init_from_ini
+
+	sshfs "${GENERAL[REPOSITORY]}" /REPO -o CheckHostIP=no -o StrictHostKeyChecking=no
+	if [[ "${?}" != "0" ]]; then
+		# mounting was not successfull
+		echo "mount of ${GENERAL[REPOSITORY]} to /REPO via sshfs was not successfull"
+	else
+		# successful mount
+		export BORG_REPO="/REPO/${GENERAL[FOLDER]}"
+		[[ ! -e "${BORG_REPO}" ]] && echo "init backupfolder" && borg init
+	fi
+}
+
+host_backup() {
+	:
 }
 
 docker_do_backup() {
-	source /borg-env/bin/activate
-
-	SCRIPTVERSION=1
-
-	INIFILE=/B/borg-backup.ini
-	BACKUPREPO=""
-	BACKUPNAME=""
-	DATEAPPEND=""
-	DATEFORMAT=""
-	EXCLUDE=""
-	PRUNE="0"
-	PRUNEHOUR=""
-	PRUNEDAY=""
-	PRUNEWEEK=""
-	PRUNEMONTH=""
-	PRUNEYEAR=""
-	VERSION=0
-	VERBOSE=0
-
-	__shini_parsed () {
-		case "${1}" in
-			"REPO")
-				[[ "${2}" == "backuprepo" ]] && export BACKUPREPO="${3}"
-				[[ "${2}" == "backupname" ]] && export BACKUPNAME="${3}"
-				[[ "${2}" == "dateappend" ]] && export DATEAPPEND="${3}"
-				[[ "${2}" == "dateformat" ]] && export DATEFORMAT="${3}"
-				;;
-
-			"MISC")
-				[[ "${2}" == "version" ]] && export VERSION=${3}
-				[[ "${2}" == "verbose" ]] && export VERBOSE=${3}
-				;;
-
-			"EXCLUDE")
-				pattern="${3}"
-				[[ "${pattern:0:1}" == "/" ]] && pattern="/B${pattern}"
-				export EXCLUDE="${EXCLUDE} --exclude ${pattern}"
-				;;
-
-			"PRUNE")
-				[[ "${2}" == "enable" ]] && export PRUNE="1"
-				[[ "${2}" == "hourly" ]] && export PRUNEHOUR="--keep-hourly ${3}"
-				[[ "${2}" == "daily" ]] && export PRUNEDAY="--keep-daily ${3}"
-				[[ "${2}" == "weekly" ]] && export PRUNEWEEK="--keep-weekly ${3}"
-				[[ "${2}" == "monthly" ]] && export PRUNEMONTH="--keep-monthly ${3}"
-				[[ "${2}" == "yearly" ]] && export PRUNEYEAR="--keep-yearly ${3}"
-				;;
-
-			*)
-				echo "inifile problem: \$1=${1}, \$2=${2}, \$3=${3} unknown"
-				;;
-		esac
-	}
-
-	if [[ "$1" == "mybackup" ]]; then
-
-		[[ ! -e ${INIFILE} ]] && echo "No inifile ${INIFILE}, exited" && exit 1
-
-		source /usr/bin/shini
-
-		shini_parse ${INIFILE}
-
-		[[ "${SCRIPTVERSION}" != "${VERSION}" ]] && echo "scriptversion ${SCRIPTVERSION} not eqal with inifile version ${VERSION}" && exit 1
-
-		[[ -z "${BACKUPREPO}" ]] && echo "inifile problem: no 'backuprepo' entry" && exit
-		[[ -z "${BACKUPNAME}" ]] && echo "inifile problem: no 'backupname' entry" && exit
-
-		[[ "${VERBOSE}" == "1" ]] && VERBOSE="--progress" || VERBOSE=""
-
-		[[ -z "${DATEFORMAT}" ]] && export DATEFORMAT="+%Y-%m-%d"
-		BACKUPDATE=$(date ${DATEFORMAT})
-
-		backupname="${BACKUPNAME}"
-		[[ ! -z "${DATEAPPEND}" ]] && backupname="${backupname}-${BACKUPDATE}"
-
-		backuppathes=""
-		backupdir="/backupdir"
-
-		for i in /B/*
-		do
-			backuppathes="${backuppathes} ${i}"
-		done
-
-		[[ ! -e ${backupdir}/${BACKUPREPO} ]] && borg init ${backupdir}/${BACKUPREPO}
-
-		echo ":: " borg create ${VERBOSE} --stats \
-			${backupdir}/${BACKUPREPO}::${backupname} \
-			${backuppathes} \
-			${EXCLUDE}
-		borg create ${VERBOSE} --stats \
-			${backupdir}/${BACKUPREPO}::${backupname} \
-			${backuppathes} \
-			${EXCLUDE}
-
-		if [[ "${PRUNE}" == "1" ]]; then
-			echo ":: " borg prune --stats -v ${backupdir}/${BACKUPREPO} \
-				${PRUNEDAY} \
-				${PRUNEWEEK} \
-				${PRUNEMONTH}
-			borg prune --stats -v ${backupdir}/${BACKUPREPO} \
-				${PRUNEHOUR} \
-				${PRUNEDAY} \
-				${PRUNEWEEK} \
-				${PRUNEMONTH} \
-				${PRUNEYEAR}
-		fi
-
-		exit 0
-	fi
-
-	borg $*
+	:
 }
 
 case "${1}" in

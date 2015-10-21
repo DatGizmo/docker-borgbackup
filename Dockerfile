@@ -53,5 +53,6 @@ RUN . /borg-env/bin/activate ;\
 #    EXPOSE 7000
 
 ADD adds/borgctrl.sh /usr/bin/borgctrl
-RUN chmod a+x /usr/bin/borgctrl
+RUN chmod a+x /usr/bin/borgctrl ;\
+    mkdir -p /REPO
 
