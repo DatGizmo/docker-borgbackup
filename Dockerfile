@@ -8,6 +8,10 @@ WORKDIR /borg
 ENTRYPOINT ["/usr/bin/borgctrl"]
 CMD ["--help"]
 
+# to prevent some filepath issues with python code we have to set the language
+ENV LANG C.UTF-8
+RUN ln -sf /usr/share/zoneinfo/Europe/Berlin /etc/localtime
+
 RUN export DEBIAN_FRONTEND=noninteractive \
     && apt-get update -y \
     && apt-get install -y \
