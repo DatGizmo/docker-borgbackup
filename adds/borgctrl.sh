@@ -21,6 +21,9 @@ usage() {
 	echo "-+> usage ..."
 }
 
+# fasting app start a bit
+ldconfig
+
 # check installation of shini
 SHINI=""
 if [[ -f ${INSTALLDIR}/../misc/shini/shini.sh ]]; then
@@ -94,10 +97,17 @@ init_from_ini() {
 	shini_parse ${INIFILE}
 
 	# error and default handling
-	[[ -z "${GENERAL[FOLDER]}" ]] && GENERAL[FOLDER]="/STORAGE/BACKUP" || GENERAL[FOLDER]="/STORAGE/${GENERAL[FOLDER]}"
+	[[ -z "${GENERAL[FOLDER]}" ]] && GENERAL[FOLDER]="/STORAGE/BACKUP"
 	[[ -z "${GENERAL[SSHKEY]}" ]] && echo "-+> sshkey is needed" && exit 1
 	[[ ! -z "${GENERAL[VERBOSE]}" ]] && [[ "${GENERAL[VERBOSE]}" == "1" ]] && GENERAL[VERBOSE]="-v" || GENERAL[VERBOSE]=""
 	[[ ! -z "${GENERAL[STAT]}" ]] && [[ "${GENERAL[STAT]}" == "1" ]] && GENERAL[STAT]="-s" || GENERAL[STAT]=""
+
+	[[ -z "${GENERAL[REPOSITORY]}" ]] && echo "-+> ini file problem: GENERAL -> REPOSITORY not set" && exit 1
+	tlatag="${GENERAL[REPOSITORY]:0:3}"
+	[[ "${tlatag}" != "ssh" ]] && [[ "${tlatag}" != "fil" ]] && \
+		echo "-+> ini file problem: GENERAL -> REPOSITORY should start with ssh: or file:" && exit 1
+	arr=(${GENERAL[REPOSITORY]//:/ })
+	[[ "${arr[0]}" == "file" ]] && GENERAL[FILESTORE]="${arr[1]}"
 
 	if [[ ! -z "${SERVER[REPOSITORYFOLDER]}${SERVER[SSHPORT]}${SERVER[SSHKEYCONF]}" ]]; then
 		[[ -z "${SERVER[REPOSITORYFOLDER]}" ]] && echo "-+> ini property SERVER -> REPOSITORYFOLDER should be set" && exit 1
@@ -133,6 +143,8 @@ host_build_dockerenv_from_ini() {
 	[[ ! -z "${GENERAL[RESTOREDIR]}" ]] && dockerenv="${dockerenv} -v ${GENERAL[RESTOREDIR]}:/RESTORE"
 	[[ ! -z "${GENERAL[ENCRYPTION]}" ]] && dockerenv="${dockerenv} -e BORG_PASSPHRASE=${GENERAL[ENCRYPTION]}"
 
+	[[ ! -z "${GENERAL[FILESTORE]}" ]] && dockerenv="${dockerenv} -v ${GENERAL[FILESTORE]}:/STORAGE"
+
 	for id in "${!BACKUPIDS[@]}"; do
 		[[ ! -z "${BACKUPS[PATH${id}]}" ]] && dockerenv="${dockerenv} -v ${BACKUPS[PATH${id}]}:/BACKUP/${BACKUPS[PATH${id}]}"
 	done
@@ -149,6 +161,8 @@ docker_set_borg_repo() {
 	init_from_ini
 
 	source /borg-env/bin/activate
+
+	[[ ! -z "${GENERAL[FILESTORE]}" ]] && GENERAL[REPOSITORY]="/STORAGE"
 
 	# successful mount
 	export BORG_REPO="${GENERAL[REPOSITORY]}//${GENERAL[FOLDER]}"
