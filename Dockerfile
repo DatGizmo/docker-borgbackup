@@ -22,10 +22,10 @@ RUN export DEBIAN_FRONTEND=noninteractive \
         libacl1-dev \
         liblz4-dev \
         libssl-dev \
+        openssh-server \
         python-lz4 \
         python-virtualenv \
         python3-dev \
-	sshfs \
     && apt-get clean -y
 
 RUN git clone git://github.com/wallyhall/shini.git \
