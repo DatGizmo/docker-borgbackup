@@ -4,7 +4,7 @@ MAINTAINER Silvio Fricke <silvio.fricke@gmail.com>
 
 WORKDIR /borg
 
-ENTRYPOINT ["/usr/bin/borgctrl"]
+ENTRYPOINT ["/usr/bin/borgctl"]
 CMD ["--help"]
 
 # to prevent some filepath issues with python code we have to set the language
@@ -30,7 +30,6 @@ RUN export DEBIAN_FRONTEND=noninteractive \
     && apt-get clean -y
 
 ADD misc/shini/shini.sh /usr/bin/shini
-RUN chmod a+x /usr/bin/shini
 
 RUN virtualenv --python=python3 /borg/env ; \
     . /borg/env/bin/activate ; \
@@ -47,7 +46,8 @@ RUN git clone https://github.com/borgbackup/borg.git ./borgbackup-git -b ${VERSI
 
 ADD misc/borgbackup.ini /borg/example.ini
 ADD adds/borgctl /usr/bin/borgctl
-RUN chmod a+x /usr/bin/borgctl ;\
+
+RUN chmod a+x /usr/bin/borgctl /usr/bin/shini ;\
     mkdir -p /REPO /BACKUP /RESTORE /STORAGE;\
     rm -rf /etc/ld.so.cache
 

@@ -26,13 +26,13 @@ declare -A GENERAL
 declare -A SERVER
 declare -A BACKUPS
 declare -A BACKUPIDS
-SHA1BORGCTL=""
+SHA1BORGCTL="$(sha1sum ${BASH_SOURCE[0]} | cut -d " " -f 1)"
 
-txtwhi=$(tput setaf 7)
-txtred=$(tput setaf 1)
-txtgre=$(tput setaf 2)
-txtyel=$(tput setaf 3)
-txtres=$(tput sgr0)
+txtwhi=$([[ "${TERM}" != "dumb" ]] && tput setaf 7) &> /dev/null
+txtred=$([[ "${TERM}" != "dumb" ]] && tput setaf 1) &> /dev/null
+txtgre=$([[ "${TERM}" != "dumb" ]] && tput setaf 2) &> /dev/null
+txtyel=$([[ "${TERM}" != "dumb" ]] && tput setaf 3) &> /dev/null
+txtres=$([[ "${TERM}" != "dumb" ]] && tput sgr0)    &> /dev/null
 
 errormsg() {
 	echo "${txtred}-+>${txtres} ${*}${txtres}"
@@ -71,7 +71,6 @@ else
 fi
 
 [[ -z "${1}" ]] && usage && errormsg "no parameter"
-[[ ! -e "${INIFILE}" ]] && usage && errormsg "inifile ${INIFILE} not found"
 
 # parser for inifile
 init_from_ini() {
@@ -151,9 +150,6 @@ init_from_ini() {
 		[[ -n "${BACKUPS[CHUNKER${id}]}" ]] && BACKUPS[CHUNKER${id}]="--chunker-params ${BACKUPS[CHUNKER${id}]}"
 	done
 	[[ "${failed}" == "1" ]] && errormsg "stop because last message(s)"
-
-	# sha1 of this file
-	SHA1BORGCTL="$(sha1sum ${BASH_SOURCE[0]} | cut -d " " -f 1)"
 }
 
 # set up $dockerenv for 'docker run'
@@ -206,10 +202,6 @@ docker_set_borg_repo() {
 	else
 		export BORG_REPO="${GENERAL[REPOSITORY]}//STORAGE/${GENERAL[FOLDER]}"
 	fi
-
-	# successful mount
-	encryption=""
-	[[ -n "${GENERAL[ENCRYPTION]}" ]] && encryption="--encryption=repokey"
 
 	# TODO: We don't want user interaction for automatic backups
 	echo "StrictHostKeyChecking no" >> /etc/ssh/ssh_config
@@ -295,7 +287,7 @@ host_server() {
 	dockerenv="-v ${REPOSITORYFOLDER}:/STORAGE"
 	dockerenv="${dockerenv} -v ${SSHKEYCONF}:/root/sshkeys.txt:ro"
 	dockerenv="${dockerenv} -v ${HOME}/.borgbackup.ini:/root/.borgbackup.ini"
-	dockerenv="${dockerenv} -p ${SSHPORT}:22"
+	dockerenv="${dockerenv} -p ${SSHPORT}:${SSHPORT} -e SSHPORT=${SSHPORT}"
 
 	commandmsg "${sudo} docker stop backupserver"
 	            ${sudo} docker stop backupserver
@@ -316,6 +308,9 @@ docker_do_server() {
 		echo "command=\"/borg/env/bin/borg serve --verbose --restrict-to-path /STORAGE\" ${line}" >> /root/.ssh/authorized_keys
 	done < /root/sshkeys.txt
 
+	# configure ssh port
+	sed -i "s/^Port 22$/Port ${SSHPORT}/" /etc/ssh/sshd_config
+
 	# start/stop of sshd via init script to setup folder etc
 	/etc/init.d/ssh start > /dev/null
 	/etc/init.d/ssh stop  > /dev/null
@@ -332,23 +327,33 @@ docker_compare_host_container_script() {
 		errormsg "ccs:${HOSTSHA1BORGCTL} != hcs:${SHA1BORGCTL}"
 }
 
+check_ini() {
+	[[ ! -e "${INIFILE}" ]] && usage && errormsg "inifile ${INIFILE} not found"
+}
+
 case "${1}" in
 	"backup")
+		check_ini
 		host_backup
 		;;
 	"do_backup")
+		check_ini
 		docker_do_backup
 		;;
 	"shell")
+		check_ini
 		host_shell
 		;;
 	"do_shell")
+		check_ini
 		docker_do_shell
 		;;
 	"server")
+		check_ini
 		host_server
 		;;
 	"do_server")
+		check_ini
 		docker_do_server
 		;;
 	"get_borgctl")
