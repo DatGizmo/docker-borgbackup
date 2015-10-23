@@ -27,7 +27,8 @@ RUN export DEBIAN_FRONTEND=noninteractive \
         python-lz4 \
         python-virtualenv \
         python3-dev \
-    && apt-get clean -y
+    && apt-get clean -y \
+    && rm -rf /var/lib/apt/lists/*
 
 ADD misc/shini/shini.sh /usr/bin/shini
 

@@ -17,9 +17,9 @@
 # functions host_* executed before the docker container gets started
 # functions docker_* executed at docker runtime
 
-declare -r INIFILE="$HOME/.borgbackup.ini"
 declare -r DOCKERCONTAINER="borgbackup:test"
-declare -r INSTALLDIR=$(dirname "$(realpath ${BASH_SOURCE[0]})" )
+declare -r SCRIPT="$(realpath ${BASH_SOURCE[0]})"
+declare -r INSTALLDIR=$(dirname ${SCRIPT})
 
 # declare associative arrays
 declare -A GENERAL
@@ -52,7 +52,12 @@ commandmsg() {
 }
 
 usage() {
-	message "usage ..."
+	message "usage: ${SCRIPT} < shell | backup | server > inifile"
+	message ""
+	message "Options:"
+	message "       shell ..............: opens a configured shell to use borgbackup"
+	message "       backup .............: does a backup"
+	message "       server .............: starts a borgbackup ssh server"
 }
 
 # check installation of shini
@@ -69,8 +74,6 @@ else
 		errormsg "No /usr/bin/shini found, please copy shini.sh from https://github.com/wallyhall/shini to /usr/bin/"
 	fi
 fi
-
-[[ -z "${1}" ]] && usage && errormsg "no parameter"
 
 # parser for inifile
 init_from_ini() {
@@ -156,8 +159,9 @@ init_from_ini() {
 host_build_dockerenv_from_ini() {
 	init_from_ini
 
-	dockerenv="-v ${HOME}/.borgbackup.ini:/root/.borgbackup.ini"
-	dockerenv="${dockerenv} -v ${SSH_AUTH_SOCK}:/root/.ssh-agent -e SSH_AUTH_SOCK=/root/.ssh-agent"
+	dockerenv="-v ${INIFILE}:/root/.borgbackup.ini:ro"
+	dockerenv="${dockerenv} -e HOSTINIFILE=${INIFILE}"
+	dockerenv="${dockerenv} -v ${SSH_AUTH_SOCK}:/root/.ssh-agent -e SSH_AUTH_SOCK=/root/.ssh-agent:ro"
 	#dockerenv="${dockerenv} -v ${HOME}/.ssh/:/root/.ssh:ro"
 
 	sshkey=$(echo ${GENERAL[SSHKEY]}*)
@@ -174,7 +178,7 @@ host_build_dockerenv_from_ini() {
 	[[ -n "${GENERAL[FILESTORE]}" ]] && dockerenv="${dockerenv} -v ${GENERAL[FILESTORE]}:/STORAGE"
 
 	for id in "${!BACKUPIDS[@]}"; do
-		[[ -n "${BACKUPS[PATH${id}]}" ]] && dockerenv="${dockerenv} -v ${BACKUPS[PATH${id}]}:/BACKUP/${BACKUPS[PATH${id}]}"
+		[[ -n "${BACKUPS[PATH${id}]}" ]] && dockerenv="${dockerenv} -v ${BACKUPS[PATH${id}]}:/BACKUP/${BACKUPS[PATH${id}]}:ro"
 	done
 }
 
@@ -182,18 +186,17 @@ host_build_dockerenv_from_ini() {
 host_shell() {
 	host_build_dockerenv_from_ini
 
-	commandmsg "${sudo} docker run -ti --rm --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_shell"
-	            ${sudo} docker run -ti --rm --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_shell
+	commandmsg "${sudo} docker run -ti --rm --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_shell /root/.borgbackup.ini"
+	            ${sudo} docker run -ti --rm --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_shell /root/.borgbackup.ini
 }
 
-# setup $BORG_REPO and configure the sshd for no checks for #
+# setup $BORG_REPO and configure the sshd for no checks of
 # StrictHostKeyChecking and CheckHostIP
 docker_set_borg_repo() {
 	# update ld cache
 	ldconfig
 
 	init_from_ini
-	docker_compare_host_container_script
 
 	source /borg/env/bin/activate
 
@@ -211,9 +214,9 @@ docker_set_borg_repo() {
 # its called from host_do_shell at container time
 docker_do_shell() {
 	docker_set_borg_repo
-	docker_compare_host_container_script
 
 	message "borg environment loaded"
+	message "used inifile: ${txtyel}${HOSTINIFILE}${txtres}"
 	message "${txtyel}\$BORG_REPO${txtres} and ${txtyel}\$BORG_PASSPHRASE${txtres} are set"
 
 	# must be the last line
@@ -224,17 +227,17 @@ docker_do_shell() {
 host_backup() {
 	host_build_dockerenv_from_ini
 
-	commandmsg "${sudo} docker run --sig-proxy=false -ti --rm --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_backup"
-	            ${sudo} docker run --sig-proxy=false -ti --rm --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_backup
+	commandmsg "${sudo} docker run --sig-proxy=false -ti --rm --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_backup /root/.borgbackup.ini"
+	            ${sudo} docker run --sig-proxy=false -ti --rm --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_backup /root/.borgbackup.ini
 }
 
 # does the backup at container time
 docker_do_backup() {
 	docker_set_borg_repo
-	docker_compare_host_container_script
 
 	source /borg/env/bin/activate
 
+	message "start backup ... used configuration: ${txtyel}${HOSTINIFILE}${txtres}"
 	DATE="$(date --rfc-3339=seconds)"
 	DATE="${DATE//[^[:alnum:]]/}"
 	for id in "${!BACKUPIDS[@]}"; do
@@ -286,21 +289,20 @@ host_server() {
 
 	dockerenv="-v ${REPOSITORYFOLDER}:/STORAGE"
 	dockerenv="${dockerenv} -v ${SSHKEYCONF}:/root/sshkeys.txt:ro"
-	dockerenv="${dockerenv} -v ${HOME}/.borgbackup.ini:/root/.borgbackup.ini"
+	dockerenv="${dockerenv} -v ${INIFILE}:/root/.borgbackup.ini:ro"
+	dockerenv="${dockerenv} -e HOSTINIFILE=${INIFILE}"
 	dockerenv="${dockerenv} -p ${SSHPORT}:${SSHPORT} -e SSHPORT=${SSHPORT}"
 
 	commandmsg "${sudo} docker stop backupserver"
 	            ${sudo} docker stop backupserver
 	commandmsg "${sudo} docker rm backupserver"
 	            ${sudo} docker rm backupserver
-	commandmsg "${sudo} docker run ${SERVER[BACKGROUND]} --name=backupserver --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_server"
-	            ${sudo} docker run ${SERVER[BACKGROUND]} --name=backupserver --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_server
+	commandmsg "${sudo} docker run ${SERVER[BACKGROUND]} --name=backupserver --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_server /root/.borgbackup.ini"
+	            ${sudo} docker run ${SERVER[BACKGROUND]} --name=backupserver --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_server /root/.borgbackup.ini
 }
 
 # generate the authorized_keys file and starts a sshd at container time
 docker_do_server() {
-	docker_compare_host_container_script
-
 	# build authorized_keys file
 	mkdir -p /root/.ssh
 	:>/root/.ssh/authorized_keys
@@ -320,7 +322,8 @@ docker_do_server() {
 	/usr/sbin/sshd -D
 }
 
-# check called borgctl script is the same version like the host script
+# check called borgctl script in container is the same version like the host
+# borgctl script
 docker_compare_host_container_script() {
 	[[ "${HOSTSHA1BORGCTL}" != "${SHA1BORGCTL}" ]] && usage && \
 		warnmsg "Container control script is not the same as the client script" && \
@@ -331,12 +334,32 @@ check_ini() {
 	[[ ! -e "${INIFILE}" ]] && usage && errormsg "inifile ${INIFILE} not found"
 }
 
+# check parameters
+case ${#} in
+	1)
+		[[ "${1}" != "get_borgctl" ]] && [[ "${1}" != "get_ini" ]] && usage && errormsg "wrong parameter count"
+
+		# get_borgctl and get_ini must be called within a container
+		# this booth functions should only called via 'docker
+		# run' command, so HOSTSHA1BORGCTL isn't set.
+		[[ -n "${HOSTSHA1BORGCTL}" ]] && usage && errormsg "get_borgctl and get_ini should only run via plain 'docker run' command"
+		;;
+	2)
+		declare -r INIFILE="$(realpath ${2})"
+		;;
+	*)
+		usage
+		errormsg "wrong parameter count"
+		;;
+esac
+
 case "${1}" in
 	"backup")
 		check_ini
 		host_backup
 		;;
 	"do_backup")
+		docker_compare_host_container_script
 		check_ini
 		docker_do_backup
 		;;
@@ -345,6 +368,7 @@ case "${1}" in
 		host_shell
 		;;
 	"do_shell")
+		docker_compare_host_container_script
 		check_ini
 		docker_do_shell
 		;;
@@ -353,6 +377,7 @@ case "${1}" in
 		host_server
 		;;
 	"do_server")
+		docker_compare_host_container_script
 		check_ini
 		docker_do_server
 		;;
