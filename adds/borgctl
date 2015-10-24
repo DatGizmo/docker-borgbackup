@@ -55,6 +55,7 @@ usage() {
 	message "usage: ${SCRIPT} < shell | backup | server > inifile"
 	message ""
 	message "Options:"
+	message ""
 	message "       shell ..............: opens a configured shell to use borgbackup"
 	message "       backup .............: does a backup"
 	message "       server .............: starts a borgbackup ssh server"

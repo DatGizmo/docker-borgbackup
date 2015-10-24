@@ -11,9 +11,8 @@ Alternative can you get the controlling script via `docker run --rm
 silviof/docker-borgbackup get_borgctl`. The used script must be the same as the
 script in the container.
 
-Configuration is done via `.borgbackup.ini` file in `$HOME` of the caller.
-Again, you can get a example ini file via `docker run --rm
-silviof/docker-borgbackup get_ini`.
+Configuration is done via a ini-file. You can get a example ini file via
+`docker run --rm silviof/docker-borgbackup get_ini`.
 
 You have two choices to save you data. The first one is to backup on a local
 file store/mounted device. And the second one is a backup via ssh/sftp
@@ -27,8 +26,8 @@ backup everyday at 12 o\`clock and hold the backups for the last 7 days. Our
 backup folder is mounted in /media/sde3. The backup should placed into the
 `BACKUP` folder of this device.
 
-First step is to put the `.borgbackup.ini` file in our `$HOME`-folder. The
-content should be something like this:
+First step is to put somewehere a `borgbackup.ini` file. The content should be
+something like this:
 
     [GENERAL]
     REPOSITORY = "file:///media/sde3"
@@ -50,7 +49,7 @@ content should be something like this:
 Now we should initialize the backup store via `borgctl shell` command. After
 that we should dropped into a container configured for work with borg.
 
-    $ borgctl shell
+    $ borgctl shell ~/borgbackup.ini
     -+> sudo docker run -ti [...] silviof/docker-borgbackup do_shell
     -+> borg environment loaded
     -+> $BORG_REPO and $BORG_PASSPHRASE are set
@@ -96,7 +95,7 @@ The storage is now initialized.
 The second step is a good idea to do the backup by hand. Via `borgctl` script
 is this very simple. (example output)
 
-    $ borgctl backup
+    $ borgctl backup ~/borgbackup.ini
     -+> sudo docker run [...] silviof/docker-borgbackup do_backup
 
     -+> BACKUP for 001 ...
@@ -134,7 +133,7 @@ configure automatic backup via cronjob.
 
 Add this to your cronjob via `crontab -e`:
 
-    12 * * * * borgctl backup
+    12 * * * * borgctl backup ${HOME}/borgbackup.ini
 
 [borg]: https://borgbackup.github.io/
 [repository]: https://github.com/silvio/docker-borgbackup
