@@ -17,7 +17,7 @@
 # functions host_* executed before the docker container gets started
 # functions docker_* executed at docker runtime
 
-declare -r DOCKERCONTAINER="borgbackup:test"
+declare -r DOCKERCONTAINER="silviof/docker-borgbackup"
 declare -r SCRIPT="$(realpath ${BASH_SOURCE[0]})"
 declare -r INSTALLDIR=$(dirname ${SCRIPT})
 
