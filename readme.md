@@ -9,10 +9,11 @@ computer.
 This backup system is controlled via borgctl script from this [repository].
 Alternative can you get the controlling script via `docker run --rm
 silviof/docker-borgbackup get_borgctl`. The used script must be the same as the
-script in the container.
-
-Configuration is done via a ini-file. You can get a example ini file via
-`docker run --rm silviof/docker-borgbackup get_ini`.
+script in the container. Configuration is done via a ini-file. You can get
+a example ini file via `docker run --rm silviof/docker-borgbackup get_ini`.
+This project is configured via ini-files. For this you need the [shini] ini
+file parser located at `/usr/bin/shini.sh`. You can get a copy with `docker run
+--rm silviof/docker-borgbackup get_shini`.
 
 You have two choices to save you data. The first one is to backup on a local
 file store/mounted device. And the second one is a backup via ssh/sftp
@@ -152,3 +153,4 @@ Add this to your cronjob via `crontab -e`:
 
 [borg]: https://borgbackup.github.io/
 [repository]: https://github.com/silvio/docker-borgbackup
+[shini]: https://github.com/wallyhall/shini.git
