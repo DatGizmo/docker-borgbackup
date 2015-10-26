@@ -1,6 +1,5 @@
 #!/bin/bash
 
-
 # this is the borgbackup command file. This file needs to be installed on the
 # host and docker side.
 #
@@ -13,6 +12,7 @@
 #
 # get_borgctl: output the installed borgctl script
 # get_ini: output a commented example ini file
+# get_shini: shell ini parser
 #
 # functions host_* executed before the docker container gets started
 # functions docker_* executed at docker runtime
@@ -27,6 +27,10 @@ declare -A SERVER
 declare -A BACKUPS
 declare -A BACKUPIDS
 SHA1BORGCTL="$(sha1sum ${BASH_SOURCE[0]} | cut -d " " -f 1)"
+
+BORGBACKUP_DOCKER_RUN_SHELL_OPTION=${BORGBACKUP_DOCKER_RUN_SHELL_OPTION:-"-ti --rm"}
+BORGBACKUP_DOCKER_RUN_BACKUP_OPTION=${BORGBACKUP_DOCKER_RUN_BACKUP_OPTION:-"--rm --sig-proxy"}
+BORGBACKUP_DOCKER_RUN_SERVER_OPTION=${BORGBACKUP_DOCKER_RUN_SERVER_OPTION:-"--name=backupserver"}
 
 txtwhi=$([[ "${TERM}" != "dumb" ]] && tput setaf 7) &> /dev/null
 txtred=$([[ "${TERM}" != "dumb" ]] && tput setaf 1) &> /dev/null
@@ -49,9 +53,11 @@ message() {
 
 commandmsg() {
 	echo "${txtgre}-+>${txtres} ${*}${txtres}"
+	${@}
 }
 
 usage() {
+	echo ""
 	message "usage: ${SCRIPT} < shell | backup | server > inifile"
 	message ""
 	message "Options:"
@@ -102,7 +108,7 @@ init_from_ini() {
 			"BACKUP"*)
 				id="${1//BACKUP/}"
 				BACKUPIDS["${id}"]=1
-				[[ "$2" == "PATH" ]] && BACKUPS[PATH${id}]="${3}"
+				[[ "$2" == "ARCHIVENAME" ]] && BACKUPS[ARCHIVENAME${id}]="${3}"
 				[[ "$2" == "CHUNKER" ]] && BACKUPS[CHUNKER${id}]="${3}"
 				[[ "$2" == "COMPRESSION" ]] && BACKUPS[COMPRESSION${id}]="${3}"
 				[[ "$2" == "KEEPWITHIN" ]] && BACKUPS[KEEPWITHIN${id}]="${3}"
@@ -111,6 +117,9 @@ init_from_ini() {
 				[[ "$2" == "PRUNEWEEKLY" ]] && BACKUPS[PRUNEWEEKLY${id}]="$3"
 				[[ "$2" == "PRUNEMONTHLY" ]] && BACKUPS[PRUNEMONTHLY${id}]="$3"
 				[[ "$2" == "PRUNEYEARLY" ]] && BACKUPS[PRUNEYEARLY${id}]="$3"
+				if [[ "$2" == "PATH" ]]; then
+					BACKUPS[PATH${id}]="${BACKUPS[PATH${id}]} ${3}"
+				fi
 				if [[ "$2" == "EXCLUDE" ]]; then
 					# Appending of exclude patterns
 					local excludepath="${3}"
@@ -150,6 +159,7 @@ init_from_ini() {
 	failed="0"
 	for id in "${!BACKUPIDS[@]}"; do
 		[[ -z "${BACKUPS[PATH${id}]}" ]] && warnmsg "ini-file problem: PATH-entry for BACKUP${id} not provided" && failed="1"
+		[[ -z "${BACKUPS[ARCHIVENAME${id}]}" ]] && warnmsg "ini-file problem: ARCHIVENAME-entry for BACKUP${id} not provided" && failed="1"
 		[[ -z "${BACKUPS[COMPRESSION${id}]}" ]] && BACKUPS[COMPRESSION${id}]="-C none" || BACKUPS[COMPRESSION${id}]="-C ${BACKUPS[COMPRESSION${id}]}"
 		[[ -n "${BACKUPS[CHUNKER${id}]}" ]] && BACKUPS[CHUNKER${id}]="--chunker-params ${BACKUPS[CHUNKER${id}]}"
 	done
@@ -162,7 +172,7 @@ host_build_dockerenv_from_ini() {
 
 	dockerenv="-v ${INIFILE}:/root/.borgbackup.ini:ro"
 	dockerenv="${dockerenv} -e HOSTINIFILE=${INIFILE}"
-	dockerenv="${dockerenv} -v ${SSH_AUTH_SOCK}:/root/.ssh-agent -e SSH_AUTH_SOCK=/root/.ssh-agent:ro"
+	[[ -n "${SSH_AUTH_SOCK}" ]] && dockerenv="${dockerenv} -v ${SSH_AUTH_SOCK}:/root/.ssh-agent -e SSH_AUTH_SOCK=/root/.ssh-agent:ro"
 
 	sshkey=$(echo ${GENERAL[SSHKEY]}*)
 	for key in ${sshkey}; do
@@ -178,7 +188,9 @@ host_build_dockerenv_from_ini() {
 	[[ -n "${GENERAL[FILESTORE]}" ]] && dockerenv="${dockerenv} -v ${GENERAL[FILESTORE]}:/STORAGE"
 
 	for id in "${!BACKUPIDS[@]}"; do
-		[[ -n "${BACKUPS[PATH${id}]}" ]] && dockerenv="${dockerenv} -v ${BACKUPS[PATH${id}]}:/BACKUP/${BACKUPS[PATH${id}]}:ro"
+		for path in $(echo ${BACKUPS[PATH${id}]}); do
+			dockerenv="${dockerenv} -v ${path}:/BACKUP/${path}:ro"
+		done
 	done
 }
 
@@ -186,8 +198,7 @@ host_build_dockerenv_from_ini() {
 host_shell() {
 	host_build_dockerenv_from_ini
 
-	commandmsg "${sudo} docker run -ti --rm --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_shell /root/.borgbackup.ini"
-	            ${sudo} docker run -ti --rm --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_shell /root/.borgbackup.ini
+	commandmsg ${sudo} docker run ${BORGBACKUP_DOCKER_RUN_SHELL_OPTION} --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_shell /root/.borgbackup.ini
 }
 
 # setup $BORG_REPO and configure the sshd for no checks of
@@ -227,8 +238,7 @@ docker_do_shell() {
 host_backup() {
 	host_build_dockerenv_from_ini
 
-	commandmsg "${sudo} docker run --sig-proxy=false -ti --rm --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_backup /root/.borgbackup.ini"
-	            ${sudo} docker run --sig-proxy=false -ti --rm --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_backup /root/.borgbackup.ini
+	commandmsg ${sudo} docker run ${BORGBACKUP_DOCKER_RUN_BACKUP_OPTION} --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_backup /root/.borgbackup.ini
 }
 
 # does the backup at container time
@@ -243,8 +253,7 @@ docker_do_backup() {
 	for id in "${!BACKUPIDS[@]}"; do
 		echo ""
 		echo "-+> BACKUP for ${id} ..."
-		borgpath="${BACKUPS[PATH${id}]}"
-		borgarchivebase="${borgpath//[^[:alnum:]]/}"
+		borgarchivebase="${BACKUPS[ARCHIVENAME${id}]//[^[:alnum:]]/}"
 		borgarchive="::${borgarchivebase}-${DATE}"
 		borgchunk="${BACKUPS[CHUNKER${id}]}"
 		borgcompress="${BACKUPS[COMPRESSION${id}]}"
@@ -252,22 +261,24 @@ docker_do_backup() {
 		for path in $(echo ${BACKUPS[EXCLUDE${id}]}); do
 			borgexclude="${borgexclude} -e ${path}"
 		done
+		borgpath=""
+		for path in $(echo ${BACKUPS[PATH${id}]}); do
+			borgpath="${borgpath} /BACKUP/${path}"
+		done
 
-		commandmsg "borg create ${GENERAL[STAT]} ${GENERAL[VERBOSE]} ${borgcompress} ${borgchunk} ${borgexclude} ${borgarchive} /BACKUP/${borgpath}"
-		            borg create ${GENERAL[STAT]} ${GENERAL[VERBOSE]} ${borgcompress} ${borgchunk} ${borgexclude} ${borgarchive} /BACKUP/${borgpath}
+		commandmsg borg create ${GENERAL[STAT]} ${GENERAL[VERBOSE]} ${borgcompress} ${borgchunk} ${borgexclude} ${borgarchive} ${borgpath}
 
 		borgpruneparam=""
-		[[ -n "${BACKUPS[PRUNEHOURLY${id}]}" ]] && borgpruneparam="-H ${BACKUPS[PRUNEHOURLY${id}]}"
-		[[ -n "${BACKUPS[PRUNEDAILY${id}]}" ]] && borgpruneparam="-d ${BACKUPS[PRUNEDAILY${id}]}"
-		[[ -n "${BACKUPS[PRUNEWEEKLY${id}]}" ]] && borgpruneparam="-w ${BACKUPS[PRUNEWEEKLY${id}]}"
-		[[ -n "${BACKUPS[PRUNEMONTHLY${id}]}" ]] && borgpruneparam="-m ${BACKUPS[PRUNEMONTHLY${id}]}"
-		[[ -n "${BACKUPS[PRUNEYEARLY${id}]}" ]] && borgpruneparam="-y ${BACKUPS[PRUNEYEARLY${id}]}"
-		[[ -n "${BACKUPS[KEEPWITHIN${id}]}" ]] && borgpruneparam="--keep-within ${BACKUPS[KEEPWITHIN${id}]}"
+		[[ -n "${BACKUPS[PRUNEHOURLY${id}]}" ]] && borgpruneparam="${borgpruneparam} -H ${BACKUPS[PRUNEHOURLY${id}]}"
+		[[ -n "${BACKUPS[PRUNEDAILY${id}]}" ]] && borgpruneparam="${borgpruneparam} -d ${BACKUPS[PRUNEDAILY${id}]}"
+		[[ -n "${BACKUPS[PRUNEWEEKLY${id}]}" ]] && borgpruneparam="${borgpruneparam} -w ${BACKUPS[PRUNEWEEKLY${id}]}"
+		[[ -n "${BACKUPS[PRUNEMONTHLY${id}]}" ]] && borgpruneparam="${borgpruneparam} -m ${BACKUPS[PRUNEMONTHLY${id}]}"
+		[[ -n "${BACKUPS[PRUNEYEARLY${id}]}" ]] && borgpruneparam="${borgpruneparam} -y ${BACKUPS[PRUNEYEARLY${id}]}"
+		[[ -n "${BACKUPS[KEEPWITHIN${id}]}" ]] && borgpruneparam="${borgpruneparam} --keep-within ${BACKUPS[KEEPWITHIN${id}]}"
 
 		if [[ -n "${borgpruneparam}" ]]; then
 			message "PRUNE  for ${id} ..."
-			commandmsg "borg prune -p ${borgarchivebase} ${GENERAL[STAT]} ${GENERAL[VERBOSE]} ${borgpruneparam}"
-			            borg prune -p ${borgarchivebase} ${GENERAL[STAT]} ${GENERAL[VERBOSE]} ${borgpruneparam}
+			commandmsg borg prune -p ${borgarchivebase} ${GENERAL[STAT]} ${GENERAL[VERBOSE]} ${borgpruneparam}
 		fi
 	done
 }
@@ -293,12 +304,9 @@ host_server() {
 	dockerenv="${dockerenv} -e HOSTINIFILE=${INIFILE}"
 	dockerenv="${dockerenv} -p ${SSHPORT}:${SSHPORT} -e SSHPORT=${SSHPORT}"
 
-	commandmsg "${sudo} docker stop backupserver"
-	            ${sudo} docker stop backupserver
-	commandmsg "${sudo} docker rm backupserver"
-	            ${sudo} docker rm backupserver
-	commandmsg "${sudo} docker run ${SERVER[BACKGROUND]} --name=backupserver --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_server /root/.borgbackup.ini"
-	            ${sudo} docker run ${SERVER[BACKGROUND]} --name=backupserver --privileged -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_server /root/.borgbackup.ini
+	commandmsg ${sudo} docker stop backupserver
+	commandmsg ${sudo} docker rm backupserver
+	commandmsg ${sudo} docker run ${BORGBACKUP_DOCKER_RUN_SERVER_OPTION} --privileged ${SERVER[BACKGROUND]} -e HOSTSHA1BORGCTL=${SHA1BORGCTL} ${dockerenv} ${DOCKERCONTAINER} do_server /root/.borgbackup.ini
 }
 
 # generate the authorized_keys file and starts a sshd at container time
@@ -337,7 +345,8 @@ check_ini() {
 # check parameters
 case ${#} in
 	1)
-		[[ "${1}" != "get_borgctl" ]] && [[ "${1}" != "get_ini" ]] && usage && errormsg "wrong parameter count"
+		[[ "${1}" != "get_borgctl" ]] && [[ "${1}" != "get_ini" ]] && [[ "${1}" != "get_shini" ]] \
+			&& usage && errormsg "wrong parameter count"
 
 		# get_borgctl and get_ini must be called within a container
 		# this booth functions should only called via 'docker
@@ -386,6 +395,12 @@ case "${1}" in
 		;;
 	"get_ini")
 		cat /borg/example.ini
+		;;
+	"get_shini")
+		cat /usr/bin/shini
+		;;
+	*)
+		errormsg "${txtred}${1}${txtres} isn't a usefull command"
 		;;
 esac
 exit 0

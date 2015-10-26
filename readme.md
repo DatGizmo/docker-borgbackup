@@ -18,6 +18,16 @@ You have two choices to save you data. The first one is to backup on a local
 file store/mounted device. And the second one is a backup via ssh/sftp
 protocol and a borg server. Booth is possible with this docker backup solution.
 
+You can take influence on the running docker container with some environment
+variables.
+
+*   `BORGBACKUP_DOCKER_RUN_SHELL_OPTION` change the docker run call for
+    `shell`. Default is `-ti --rm`.
+*   `BORGBACKUP_DOCKER_RUN_BACKUP_OPTION` change the docker run call for
+    `backup`. Default is `--rm --sig-proxy`.
+*   `BORGBACKUP_DOCKER_RUN_SERVER_OPTION` change the docker run call for
+    `server`. Default is `--rm --name=backupserver`.
+
 To work correctly the docker container needs some more data like your ssh-key
 or/and a connection to the ssh-agent. To backup data which isn't owned by the
 caller we start the container via `sudo` (configurable) and privileged. All
