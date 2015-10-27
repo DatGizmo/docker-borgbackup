@@ -178,7 +178,7 @@ host_build_dockerenv_from_ini() {
 
 	dockerenv="-v ${INIFILE}:/root/.borgbackup.ini:ro"
 	dockerenv="${dockerenv} -e HOSTINIFILE=${INIFILE}"
-	[[ -n "${SSH_AUTH_SOCK}" ]] && dockerenv="${dockerenv} -v ${SSH_AUTH_SOCK}:/root/.ssh-agent -e SSH_AUTH_SOCK=/root/.ssh-agent:ro"
+	[[ -n "${SSH_AUTH_SOCK}" ]] && dockerenv="${dockerenv} -v ${SSH_AUTH_SOCK}:/root/.ssh-agent:ro -e SSH_AUTH_SOCK=/root/.ssh-agent"
 
 	sshkey=$(echo ${GENERAL[SSHKEY]}*)
 	for key in ${sshkey}; do
